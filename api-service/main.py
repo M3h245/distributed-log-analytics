@@ -1,25 +1,28 @@
-from fastapi import FastAPI
-import psycopg2
-import os
+from fastapi import FastAPI, Query
+from db import get_connection
 
 app = FastAPI()
 
-conn = psycopg2.connect(
-    dbname=os.getenv("POSTGRES_DB"),
-    user=os.getenv("POSTGRES_USER"),
-    password=os.getenv("POSTGRES_PASSWORD"),
-    host=os.getenv("DB_HOST"),
-    port=int(os.getenv("DB_PORT")),
-)
 
-cur = conn.cursor()
+
 
 @app.get("/")
 def health():
     return {"status": "ok"}
 @app.get("/logs")
-
-def get_logs():
-    cur.execute("SELECT * FROM logs ORDER BY id DESC LIMIT 10")
+def get_logs(limit: int = 10, from_timestamp: float = 0):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, message, timestamp
+        FROM logs
+        WHERE timestamp >= %s
+        ORDER BY timestamp DESC
+        LIMIT %s
+        """,
+        (from_timestamp, limit),
+    )
     rows = cur.fetchall()
+    conn.close()
     return {"logs": rows}

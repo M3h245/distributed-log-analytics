@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Log Analytics UI</title>
+  <style>
+    :root {
+      --bg: #f7f7f4;
+      --card: #ffffff;
+      --text: #1d1d1f;
+      --muted: #6b7280;
+      --accent: #0f766e;
+      --border: #e5e7eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: linear-gradient(135deg, #f7f7f4, #eef7f6);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 900px;
+      margin: 32px auto;
+      padding: 0 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+    }
+    p {
+      margin: 0;
+      color: var(--muted);
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    input, button {
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      font-size: 14px;
+    }
+    input { flex: 1; min-width: 220px; }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #374151;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+    }
+    th, td {
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      padding: 10px 8px;
+      font-size: 14px;
+    }
+    .muted { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Distributed Log Analytics</h1>
+      <p>Simple student UI for sending events and reading processed logs.</p>
+      <div class="row">
+        <input id="message" value="hello from ui" />
+        <button id="sendBtn">Send Event</button>
+        <button id="refreshBtn" class="secondary">Refresh Logs</button>
+      </div>
+      <div id="status" class="muted" style="margin-top: 10px;">Ready.</div>
+    </div>
+
+    <div class="card">
+      <strong>Latest Logs</strong>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Message</th>
+            <th>Timestamp</th>
+          </tr>
+        </thead>
+        <tbody id="logsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const logsBody = document.getElementById("logsBody");
+    const messageInput = document.getElementById("message");
+    const sendBtn = document.getElementById("sendBtn");
+    const refreshBtn = document.getElementById("refreshBtn");
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function formatTime(ts) {
+      const d = new Date(ts * 1000);
+      return isNaN(d.getTime()) ? "-" : d.toLocaleString();
+    }
+
+    async function loadLogs() {
+      setStatus("Loading logs...");
+      try {
+        const res = await fetch("/logs?limit=20");
+        const data = await res.json();
+        logsBody.innerHTML = "";
+        (data.logs || []).forEach((log) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${log.id}</td>
+            <td>${log.message}</td>
+            <td>${formatTime(log.timestamp)}</td>
+          `;
+          logsBody.appendChild(tr);
+        });
+        setStatus(`Loaded ${(data.logs || []).length} log(s).`);
+      } catch (e) {
+        setStatus("Failed to load logs.");
+      }
+    }
+
+    async function sendEvent() {
+      const message = encodeURIComponent(messageInput.value || "ui event");
+      setStatus("Sending event...");
+      try {
+        const res = await fetch(`/demo-send?message=${message}`);
+        await res.json();
+        setStatus("Event sent.");
+        await loadLogs();
+      } catch (e) {
+        setStatus("Failed to send event.");
+      }
+    }
+
+    sendBtn.addEventListener("click", sendEvent);
+    refreshBtn.addEventListener("click", loadLogs);
+    loadLogs();
+  </script>
+</body>
+</html>

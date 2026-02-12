@@ -4,9 +4,16 @@ import psycopg2
 import threading
 import time
 import os
+import socket
 
 app = FastAPI()
 listener_thread = None
+
+STREAM_NAME = os.getenv("REDIS_STREAM", "log_stream")
+GROUP_NAME = os.getenv("REDIS_GROUP", "log_group")
+CONSUMER_NAME = os.getenv("CONSUMER_NAME", socket.gethostname())
+READ_COUNT = int(os.getenv("REDIS_READ_COUNT", "10"))
+READ_BLOCK_MS = int(os.getenv("REDIS_BLOCK_MS", "5000"))
 
 r = redis.Redis(
     host=os.getenv("REDIS_HOST"),
@@ -46,17 +53,17 @@ def listen():
     cur = conn.cursor()
 
     try:
-        r.xgroup_create("log_stream", "log_group", id="0", mkstream=True)
+        r.xgroup_create(STREAM_NAME, GROUP_NAME, id="0", mkstream=True)
     except:
         pass
 
     while True:
         messages = r.xreadgroup(
-            groupname="log_group",
-            consumername="consumer_1",
-            streams={"log_stream": ">"},
-            count=10,
-            block=5000
+            groupname=GROUP_NAME,
+            consumername=CONSUMER_NAME,
+            streams={STREAM_NAME: ">"},
+            count=READ_COUNT,
+            block=READ_BLOCK_MS
         )
 
         for stream, msgs in messages:
@@ -67,7 +74,7 @@ def listen():
                 )
                 conn.commit()
 
-                r.xack("log_stream", "log_group", msg_id)
+                r.xack(STREAM_NAME, GROUP_NAME, msg_id)
                 print("Inserted:", data)
 
 @app.on_event("startup")

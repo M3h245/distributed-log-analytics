@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start services
+        run: docker compose up -d --build
+
+      - name: Wait for APIs
+        run: |
+          for i in {1..30}; do
+            if curl -sf http://localhost:8001/ >/dev/null && curl -sf http://localhost:8002/ >/dev/null; then
+              echo "Services are up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Services did not become ready in time"
+          docker compose logs
+          exit 1
+
+      - name: Send event
+        run: curl -sf "http://localhost:8001/send?message=ci-smoke-event" >/dev/null
+
+      - name: Verify event appears in API
+        run: |
+          sleep 3
+          response="$(curl -sf 'http://localhost:8002/logs?limit=50')"
+          echo "$response"
+          echo "$response" | grep -q "ci-smoke-event"
+
+      - name: Teardown
+        if: always()
+        run: docker compose down -v

@@ -1,0 +1,52 @@
+name: Build and Push to ECR
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+      PROJECT_NAME: ${{ secrets.PROJECT_NAME || 'distributed-log-analytics' }}
+      IMAGE_TAG: latest
+    strategy:
+      matrix:
+        include:
+          - name: api
+            context: api-service
+            dockerfile: api-service/Dockerfile
+          - name: producer
+            context: producer-service
+            dockerfile: producer-service/Dockerfile
+          - name: processor
+            context: processor-service
+            dockerfile: processor-service/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.PROJECT_NAME }}-${{ matrix.name }}:${{ env.IMAGE_TAG }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.PROJECT_NAME }}-${{ matrix.name }}:${{ github.sha }}

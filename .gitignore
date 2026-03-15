@@ -8,7 +8,7 @@
 
 
 # Terraform
-.terraform/
+infra/.terraform/
 *.tfstate
 *.tfstate.*
 crash.log

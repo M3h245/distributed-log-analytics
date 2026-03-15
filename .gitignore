@@ -12,3 +12,7 @@ infra/.terraform/
 *.tfstate
 *.tfstate.*
 crash.log
+infra/terraform.tfvars
+
+# Local AWS credentials
+scripts/set-aws-env.ps1

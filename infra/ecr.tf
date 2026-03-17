@@ -1,13 +1,16 @@
 resource "aws_ecr_repository" "api" {
   name = "${var.project_name}-api"
+  force_delete = true
 }
 
 resource "aws_ecr_repository" "producer" {
   name = "${var.project_name}-producer"
+  force_delete = true
 }
 
 resource "aws_ecr_repository" "processor" {
   name = "${var.project_name}-processor"
+  force_delete = true
 }
 
 output "ecr_api_repo_url" {

@@ -71,10 +71,6 @@ jobs:
           name: distributed-log-analytics-${{ github.sha }}
           path: distributed-log-analytics-${{ github.sha }}.tgz
 
-      - name: Deploy placeholder
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: echo "Deploy step placeholder - wire your cloud deploy command here."
-
       - name: Teardown
         if: always()
         run: docker compose down -v

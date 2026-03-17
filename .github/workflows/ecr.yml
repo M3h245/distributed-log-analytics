@@ -91,6 +91,22 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+
+      - name: Ensure ECS cluster exists
+        run: |
+          CLUSTER="${PROJECT_NAME}-cluster"
+
+          if aws ecs describe-clusters \
+            --clusters "$CLUSTER" \
+            --region "$AWS_REGION" \
+            --query "clusters[0].status" \
+            --output text 2>/dev/null | grep -q ACTIVE; then
+            echo "Cluster exists"
+          else
+            echo "Creating cluster $CLUSTER"
+            aws ecs create-cluster --cluster-name "$CLUSTER" --region "$AWS_REGION"
+          fi
+          
       - name: Force new deployments
         run: |
           CLUSTER="${PROJECT_NAME}-cluster"

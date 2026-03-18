@@ -4,6 +4,11 @@ on:
   push:
     branches: ['main']
   workflow_dispatch:
+    inputs:
+      az_to_fail:
+        description: "Availability Zone to simulate failure (e.g., eu-south-1a). Leave blank to auto-pick."
+        required: false
+        default: ""
 
 jobs:
   build-push:
@@ -106,3 +111,74 @@ jobs:
           CLUSTER="${CLUSTER_NAME}"
           aws ecs wait services-stable --region "$AWS_REGION" --cluster "$CLUSTER" \
             --services "${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor"
+
+  az-failover-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: deploy
+    permissions:
+      contents: read
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'eu-south-1' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'distributed-log-analytics' }}
+      CLUSTER_NAME: ${{ vars.CLUSTER_NAME || format('{0}-cluster', vars.PROJECT_NAME || 'distributed-log-analytics') }}
+      AZ_TO_FAIL: ${{ inputs.az_to_fail }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Simulate AZ Failure (Stop Tasks In One AZ)
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLUSTER="${CLUSTER_NAME}"
+          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+
+          if [[ -z "${AZ_TO_FAIL}" ]]; then
+            # Pick AZ from first API task if not provided
+            API_TASK=$(aws ecs list-tasks --region "$AWS_REGION" --cluster "$CLUSTER" \
+              --service-name "${PROJECT_NAME}-api" --desired-status RUNNING --query "taskArns[0]" --output text)
+            AZ_TO_FAIL=$(aws ecs describe-tasks --region "$AWS_REGION" --cluster "$CLUSTER" \
+              --tasks "$API_TASK" --query "tasks[0].availabilityZone" --output text)
+          fi
+
+          echo "Simulating AZ outage for: $AZ_TO_FAIL"
+
+          for svc in "${SERVICES[@]}"; do
+            TASKS=$(aws ecs list-tasks --region "$AWS_REGION" --cluster "$CLUSTER" \
+              --service-name "$svc" --desired-status RUNNING --output text --query "taskArns")
+            for task in $TASKS; do
+              AZ=$(aws ecs describe-tasks --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --tasks "$task" --query "tasks[0].availabilityZone" --output text)
+              if [[ "$AZ" == "$AZ_TO_FAIL" ]]; then
+                echo "Stopping task $task in $AZ for service $svc"
+                aws ecs stop-task --region "$AWS_REGION" --cluster "$CLUSTER" --task "$task" --reason "AZ failover test"
+              fi
+            done
+          done
+
+      - name: Verify Services Recover In Other AZ
+        run: |
+          CLUSTER="${CLUSTER_NAME}"
+          aws ecs wait services-stable --region "$AWS_REGION" --cluster "$CLUSTER" \
+            --services "${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor"
+
+      - name: Report Post-Test Task Placement
+        shell: bash
+        run: |
+          CLUSTER="${CLUSTER_NAME}"
+          for svc in "${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor"; do
+            echo "Service: $svc"
+            TASKS=$(aws ecs list-tasks --region "$AWS_REGION" --cluster "$CLUSTER" \
+              --service-name "$svc" --desired-status RUNNING --output text --query "taskArns")
+            for task in $TASKS; do
+              AZ=$(aws ecs describe-tasks --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --tasks "$task" --query "tasks[0].availabilityZone" --output text)
+              echo "  $task -> $AZ"
+            done
+          done

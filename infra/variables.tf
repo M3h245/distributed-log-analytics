@@ -64,6 +64,12 @@ variable "api_healthcheck_path" {
   default     = "/health"
 }
 
+variable "api_deregistration_delay" {
+  type        = number
+  description = "ALB target group deregistration delay (seconds)"
+  default     = 30
+}
+
 variable "api_cpu" {
   type        = number
   description = "CPU units for API task"

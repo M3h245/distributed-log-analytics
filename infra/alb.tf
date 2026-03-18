@@ -15,6 +15,7 @@ resource "aws_lb_target_group" "api" {
   protocol    = "HTTP"
   vpc_id      = aws_vpc.main.id
   target_type = "ip"
+  deregistration_delay = var.api_deregistration_delay
 
   health_check {
     path                = var.api_healthcheck_path

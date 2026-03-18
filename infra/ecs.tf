@@ -64,6 +64,13 @@ resource "aws_ecs_task_definition" "api" {
           protocol      = "tcp"
         }
       ]
+      environment = [
+        { name = "DB_HOST", value = aws_db_instance.postgres.address },
+        { name = "DB_PORT", value = tostring(var.db_port) },
+        { name = "POSTGRES_DB", value = var.db_name },
+        { name = "POSTGRES_USER", value = var.db_username },
+        { name = "POSTGRES_PASSWORD", value = var.db_password }
+      ]
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -89,6 +96,11 @@ resource "aws_ecs_task_definition" "producer" {
       name      = "producer"
       image     = local.producer_image_final
       essential = true
+      environment = [
+        { name = "REDIS_HOST", value = aws_elasticache_replication_group.redis.primary_endpoint_address },
+        { name = "REDIS_PORT", value = tostring(var.redis_port) },
+        { name = "REDIS_STREAM", value = "log_stream" }
+      ]
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -114,6 +126,17 @@ resource "aws_ecs_task_definition" "processor" {
       name      = "processor"
       image     = local.processor_image_final
       essential = true
+      environment = [
+        { name = "REDIS_HOST", value = aws_elasticache_replication_group.redis.primary_endpoint_address },
+        { name = "REDIS_PORT", value = tostring(var.redis_port) },
+        { name = "REDIS_STREAM", value = "log_stream" },
+        { name = "REDIS_GROUP", value = "log_group" },
+        { name = "DB_HOST", value = aws_db_instance.postgres.address },
+        { name = "DB_PORT", value = tostring(var.db_port) },
+        { name = "POSTGRES_DB", value = var.db_name },
+        { name = "POSTGRES_USER", value = var.db_username },
+        { name = "POSTGRES_PASSWORD", value = var.db_password }
+      ]
       logConfiguration = {
         logDriver = "awslogs"
         options = {

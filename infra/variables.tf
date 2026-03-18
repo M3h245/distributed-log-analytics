@@ -106,6 +106,48 @@ variable "worker_desired_count" {
   default     = 1
 }
 
+variable "api_min_capacity" {
+  type        = number
+  description = "Minimum tasks for API service autoscaling"
+  default     = 2
+}
+
+variable "api_max_capacity" {
+  type        = number
+  description = "Maximum tasks for API service autoscaling"
+  default     = 6
+}
+
+variable "worker_min_capacity" {
+  type        = number
+  description = "Minimum tasks for producer/processor autoscaling"
+  default     = 1
+}
+
+variable "worker_max_capacity" {
+  type        = number
+  description = "Maximum tasks for producer/processor autoscaling"
+  default     = 4
+}
+
+variable "cpu_target_utilization" {
+  type        = number
+  description = "Target CPU utilization percentage for autoscaling"
+  default     = 60
+}
+
+variable "scale_in_cooldown" {
+  type        = number
+  description = "Seconds to wait before scaling in"
+  default     = 60
+}
+
+variable "scale_out_cooldown" {
+  type        = number
+  description = "Seconds to wait before scaling out"
+  default     = 60
+}
+
 variable "db_name" {
   type        = string
   description = "PostgreSQL database name"

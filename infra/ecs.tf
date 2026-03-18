@@ -221,3 +221,84 @@ resource "aws_ecs_service" "processor" {
     assign_public_ip = true
   }
 }
+
+resource "aws_appautoscaling_target" "api" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.api.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = var.api_min_capacity
+  max_capacity       = var.api_max_capacity
+}
+
+resource "aws_appautoscaling_policy" "api_cpu" {
+  name               = "${var.project_name}-api-cpu"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.api.resource_id
+  scalable_dimension = aws_appautoscaling_target.api.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.api.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value = var.cpu_target_utilization
+
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+
+    scale_in_cooldown  = var.scale_in_cooldown
+    scale_out_cooldown = var.scale_out_cooldown
+  }
+}
+
+resource "aws_appautoscaling_target" "producer" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.producer.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = var.worker_min_capacity
+  max_capacity       = var.worker_max_capacity
+}
+
+resource "aws_appautoscaling_policy" "producer_cpu" {
+  name               = "${var.project_name}-producer-cpu"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.producer.resource_id
+  scalable_dimension = aws_appautoscaling_target.producer.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.producer.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value = var.cpu_target_utilization
+
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+
+    scale_in_cooldown  = var.scale_in_cooldown
+    scale_out_cooldown = var.scale_out_cooldown
+  }
+}
+
+resource "aws_appautoscaling_target" "processor" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.processor.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = var.worker_min_capacity
+  max_capacity       = var.worker_max_capacity
+}
+
+resource "aws_appautoscaling_policy" "processor_cpu" {
+  name               = "${var.project_name}-processor-cpu"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.processor.resource_id
+  scalable_dimension = aws_appautoscaling_target.processor.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.processor.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    target_value = var.cpu_target_utilization
+
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+
+    scale_in_cooldown  = var.scale_in_cooldown
+    scale_out_cooldown = var.scale_out_cooldown
+  }
+}

@@ -18,7 +18,7 @@ READ_BLOCK_MS = int(os.getenv("REDIS_BLOCK_MS", "5000"))
 
 r = redis.Redis(
     host=os.getenv("REDIS_HOST"),
-    port=int(os.getenv("REDIS_PORT")),
+    port=int(os.getenv("REDIS_PORT", 6379)),
     decode_responses=True
 )
 

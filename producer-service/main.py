@@ -10,7 +10,7 @@ DEFAULT_MESSAGE = os.getenv("DEFAULT_LOG_MESSAGE", "log event")
 
 r = redis.Redis(
     host=os.getenv("REDIS_HOST"),
-    port=int(os.getenv("REDIS_PORT")),
+    port = int(os.getenv("REDIS_PORT", 6379)),
     decode_responses=True
 )
 

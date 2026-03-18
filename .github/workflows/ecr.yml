@@ -118,11 +118,12 @@ jobs:
     needs: deploy
     permissions:
       contents: read
+
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'eu-south-1' }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME || 'distributed-log-analytics' }}
       CLUSTER_NAME: ${{ vars.CLUSTER_NAME || format('{0}-cluster', vars.PROJECT_NAME || 'distributed-log-analytics') }}
-      AZ_TO_FAIL: ${{ inputs.az_to_fail }}
+      AZ_TO_FAIL: ${{ github.event.inputs.az_to_fail || '' }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4

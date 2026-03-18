@@ -118,6 +118,8 @@ jobs:
     needs: deploy
     permissions:
       contents: read
+
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     env:
       AWS_REGION: ${{ vars.AWS_REGION || 'eu-south-1' }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME || 'distributed-log-analytics' }}

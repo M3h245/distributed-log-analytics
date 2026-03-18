@@ -2,6 +2,24 @@ resource "aws_ecs_cluster" "main" {
   name = "${var.project_name}-cluster"
 }
 
+resource "aws_service_discovery_private_dns_namespace" "main" {
+  name = "${var.project_name}.local"
+  vpc  = aws_vpc.main.id
+}
+
+resource "aws_service_discovery_service" "producer" {
+  name = "${var.project_name}-producer"
+
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.main.id
+    dns_records {
+      ttl  = 10
+      type = "A"
+    }
+    routing_policy = "MULTIVALUE"
+  }
+}
+
 locals {
   api_image_final       = var.api_image != "" ? var.api_image : "${aws_ecr_repository.api.repository_url}:${var.image_tag}"
   producer_image_final  = var.producer_image != "" ? var.producer_image : "${aws_ecr_repository.producer.repository_url}:${var.image_tag}"
@@ -69,7 +87,8 @@ resource "aws_ecs_task_definition" "api" {
         { name = "DB_PORT", value = tostring(var.db_port) },
         { name = "POSTGRES_DB", value = var.db_name },
         { name = "POSTGRES_USER", value = var.db_username },
-        { name = "POSTGRES_PASSWORD", value = var.db_password }
+        { name = "POSTGRES_PASSWORD", value = var.db_password },
+        { name = "PRODUCER_URL", value = "http://${aws_service_discovery_service.producer.name}.${aws_service_discovery_private_dns_namespace.main.name}:8000" }
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -182,6 +201,10 @@ resource "aws_ecs_service" "producer" {
     subnets         = aws_subnet.public[*].id
     security_groups = [aws_security_group.ecs.id]
     assign_public_ip = true
+  }
+
+  service_registries {
+    registry_arn = aws_service_discovery_service.producer.arn
   }
 }
 

@@ -2,7 +2,7 @@ name: Build and Push to ECR
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ['main']
   workflow_dispatch:
 
 jobs:
@@ -30,6 +30,9 @@ jobs:
             dockerfile: processor-service/Dockerfile
     steps:
       - uses: actions/checkout@v4
+
+      - name: Copy .env
+        run: cp .env ./app/.env
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -75,7 +78,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-
       - name: Ensure ECS cluster exists
         run: |
           CLUSTER="${CLUSTER_NAME}"
@@ -91,7 +93,7 @@ jobs:
             aws ecs create-cluster --cluster-name "$CLUSTER" --region "$AWS_REGION"
             aws ecs describe-clusters --clusters "$CLUSTER" --region "$AWS_REGION" --query "clusters[0].status" --output text
           fi
-          
+
       - name: Force new deployments
         run: |
           CLUSTER="${CLUSTER_NAME}"

@@ -269,7 +269,11 @@ jobs:
           set -euo pipefail
           ALB_DNS=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
             --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
-          curl -s "http://${ALB_DNS}/demo-send?message=${MSG1}" >/tmp/send1.json
+          if [[ -z "$ALB_DNS" || "$ALB_DNS" == "None" ]]; then
+            echo "ALB DNS not found"
+            exit 1
+          fi
+          curl -sG --data-urlencode "message=${MSG1}" "http://${ALB_DNS}/demo-send" >/tmp/send1.json
           echo "Sent message: ${MSG1}"
 
       - name: Flip AZ (Fail The Other One)
@@ -327,7 +331,11 @@ jobs:
           set -euo pipefail
           ALB_DNS=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
             --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
-          curl -s "http://${ALB_DNS}/demo-send?message=${MSG2}" >/tmp/send2.json
+          if [[ -z "$ALB_DNS" || "$ALB_DNS" == "None" ]]; then
+            echo "ALB DNS not found"
+            exit 1
+          fi
+          curl -sG --data-urlencode "message=${MSG2}" "http://${ALB_DNS}/demo-send" >/tmp/send2.json
           echo "Sent message: ${MSG2}"
 
       - name: Restore Both AZs

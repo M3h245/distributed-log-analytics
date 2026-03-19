@@ -132,34 +132,58 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Simulate AZ Failure (Stop Tasks In One AZ)
+      - name: Simulate AZ Failure (Restrict Subnets To One AZ)
         shell: bash
         run: |
           set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
           SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
 
-          if [[ -z "${AZ_TO_FAIL}" ]]; then
-            # Pick AZ from first API task if not provided
-            API_TASK=$(aws ecs list-tasks --region "$AWS_REGION" --cluster "$CLUSTER" \
-              --service-name "${PROJECT_NAME}-api" --desired-status RUNNING --query "taskArns[0]" --output text)
-            AZ_TO_FAIL=$(aws ecs describe-tasks --region "$AWS_REGION" --cluster "$CLUSTER" \
-              --tasks "$API_TASK" --query "tasks[0].availabilityZone" --output text)
-          fi
+          # Get current subnets and security group from API service
+          API_SUBNETS=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+            --services "${PROJECT_NAME}-api" --query "services[0].networkConfiguration.awsvpcConfiguration.subnets" --output text)
+          API_SG=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+            --services "${PROJECT_NAME}-api" --query "services[0].networkConfiguration.awsvpcConfiguration.securityGroups[0]" --output text)
 
+          # Map subnets to AZs
+          declare -A SUBNET_TO_AZ
+          for subnet in $API_SUBNETS; do
+            az=$(aws ec2 describe-subnets --region "$AWS_REGION" --subnet-ids "$subnet" --query "Subnets[0].AvailabilityZone" --output text)
+            SUBNET_TO_AZ["$subnet"]="$az"
+          done
+
+          # Pick AZ to fail
+          if [[ -z "${AZ_TO_FAIL}" ]]; then
+            AZ_TO_FAIL=$(printf "%s\n" "${SUBNET_TO_AZ[@]}" | sort | uniq | head -n 1)
+          fi
           echo "Simulating AZ outage for: $AZ_TO_FAIL"
 
+          # Build subnet lists
+          SUBNETS_FAIL=""
+          SUBNETS_OK=""
+          for subnet in $API_SUBNETS; do
+            if [[ "${SUBNET_TO_AZ[$subnet]}" == "$AZ_TO_FAIL" ]]; then
+              SUBNETS_FAIL+="$subnet "
+            else
+              SUBNETS_OK+="$subnet "
+            fi
+          done
+          if [[ -z "$SUBNETS_OK" ]]; then
+            echo "No remaining subnets found outside $AZ_TO_FAIL"
+            exit 1
+          fi
+
+          update_service_subnets () {
+            local svc="$1"
+            local subnets_csv
+            subnets_csv=$(printf "%s" "$2" | tr ' ' ',' | sed 's/,$//')
+            aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" \
+              --network-configuration "awsvpcConfiguration={subnets=[$subnets_csv],securityGroups=[$API_SG],assignPublicIp=ENABLED}"
+          }
+
+          echo "Restricting services to AZs outside $AZ_TO_FAIL"
           for svc in "${SERVICES[@]}"; do
-            TASKS=$(aws ecs list-tasks --region "$AWS_REGION" --cluster "$CLUSTER" \
-              --service-name "$svc" --desired-status RUNNING --output text --query "taskArns")
-            for task in $TASKS; do
-              AZ=$(aws ecs describe-tasks --region "$AWS_REGION" --cluster "$CLUSTER" \
-                --tasks "$task" --query "tasks[0].availabilityZone" --output text)
-              if [[ "$AZ" == "$AZ_TO_FAIL" ]]; then
-                echo "Stopping task $task in $AZ for service $svc"
-                aws ecs stop-task --region "$AWS_REGION" --cluster "$CLUSTER" --task "$task" --reason "AZ failover test"
-              fi
-            done
+            update_service_subnets "$svc" "$SUBNETS_OK"
           done
 
       - name: Verify Services Recover In Other AZ
@@ -167,6 +191,106 @@ jobs:
           CLUSTER="${CLUSTER_NAME}"
           aws ecs wait services-stable --region "$AWS_REGION" --cluster "$CLUSTER" \
             --services "${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor"
+
+      - name: Send Test Message (After AZ Fail)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALB_DNS=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
+            --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
+          MSG="test 2"
+          if [[ "${AZ_TO_FAIL}" != "$(printf "%s\n" "${SUBNET_TO_AZ[@]}" | sort | uniq | head -n 1)" ]]; then
+            MSG="test 1"
+          fi
+          curl -s "http://${ALB_DNS}/demo-send?message=${MSG}" >/tmp/send1.json
+          echo "Sent message: ${MSG}"
+
+      - name: Flip AZ (Fail The Other One)
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLUSTER="${CLUSTER_NAME}"
+          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+
+          SUBNETS_OK=""
+          for subnet in $API_SUBNETS; do
+            if [[ "${SUBNET_TO_AZ[$subnet]}" == "$AZ_TO_FAIL" ]]; then
+              SUBNETS_OK+="$subnet "
+            fi
+          done
+
+          update_service_subnets () {
+            local svc="$1"
+            local subnets_csv
+            subnets_csv=$(printf "%s" "$2" | tr ' ' ',' | sed 's/,$//')
+            aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" \
+              --network-configuration "awsvpcConfiguration={subnets=[$subnets_csv],securityGroups=[$API_SG],assignPublicIp=ENABLED}"
+          }
+
+          echo "Restricting services to AZ: $AZ_TO_FAIL"
+          for svc in "${SERVICES[@]}"; do
+            update_service_subnets "$svc" "$SUBNETS_OK"
+          done
+
+      - name: Verify Services Recover In Other AZ (Second Flip)
+        run: |
+          CLUSTER="${CLUSTER_NAME}"
+          aws ecs wait services-stable --region "$AWS_REGION" --cluster "$CLUSTER" \
+            --services "${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor"
+
+      - name: Send Test Message (After Second AZ Fail)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALB_DNS=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
+            --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
+          MSG="test 1"
+          if [[ "${AZ_TO_FAIL}" != "$(printf "%s\n" "${SUBNET_TO_AZ[@]}" | sort | uniq | head -n 1)" ]]; then
+            MSG="test 2"
+          fi
+          curl -s "http://${ALB_DNS}/demo-send?message=${MSG}" >/tmp/send2.json
+          echo "Sent message: ${MSG}"
+
+      - name: Restore Both AZs
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLUSTER="${CLUSTER_NAME}"
+          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+
+          update_service_subnets () {
+            local svc="$1"
+            local subnets_csv
+            subnets_csv=$(printf "%s" "$2" | tr ' ' ',' | sed 's/,$//')
+            aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" \
+              --network-configuration "awsvpcConfiguration={subnets=[$subnets_csv],securityGroups=[$API_SG],assignPublicIp=ENABLED}"
+          }
+
+          echo "Restoring services to both AZ subnets"
+          for svc in "${SERVICES[@]}"; do
+            update_service_subnets "$svc" "$API_SUBNETS"
+          done
+
+      - name: Verify Services Stable (Restored)
+        run: |
+          CLUSTER="${CLUSTER_NAME}"
+          aws ecs wait services-stable --region "$AWS_REGION" --cluster "$CLUSTER" \
+            --services "${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor"
+
+      - name: Verify Logs Contain Both Messages
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALB_DNS=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
+            --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
+
+          for i in {1..10}; do
+            DATA=$(curl -s "http://${ALB_DNS}/logs?limit=200")
+            echo "$DATA" | grep -q "test 1" && echo "$DATA" | grep -q "test 2" && exit 0
+            sleep 3
+          done
+          echo "Did not find both test messages in logs"
+          exit 1
 
       - name: Report Post-Test Task Placement
         shell: bash

@@ -175,6 +175,10 @@ resource "aws_ecs_service" "api" {
   desired_count   = var.api_desired_count
   launch_type     = "FARGATE"
 
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
+
   network_configuration {
     subnets         = aws_subnet.public[*].id
     security_groups = [aws_security_group.ecs.id]
@@ -197,6 +201,10 @@ resource "aws_ecs_service" "producer" {
   desired_count   = var.worker_desired_count
   launch_type     = "FARGATE"
 
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
+
   network_configuration {
     subnets         = aws_subnet.public[*].id
     security_groups = [aws_security_group.ecs.id]
@@ -214,6 +222,10 @@ resource "aws_ecs_service" "processor" {
   task_definition = aws_ecs_task_definition.processor.arn
   desired_count   = var.worker_desired_count
   launch_type     = "FARGATE"
+
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
 
   network_configuration {
     subnets         = aws_subnet.public[*].id

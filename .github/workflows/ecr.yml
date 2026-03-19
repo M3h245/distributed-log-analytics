@@ -148,63 +148,35 @@ jobs:
             fi
           done
 
-      - name: Simulate AZ Failure (Restrict Subnets To One AZ)
+      - name: Simulate AZ Failure (Set Desired Count To 0 For One AZ)
         shell: bash
         run: |
           set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          SERVICES=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b")
+          SERVICES_A=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-processor-a")
+          SERVICES_B=("${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-b")
 
-          # Get current subnets and security group from API service
-          API_SUBNETS=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
-            --services "${PROJECT_NAME}-api" --query "services[0].networkConfiguration.awsvpcConfiguration.subnets" --output text)
-          API_SG=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
-            --services "${PROJECT_NAME}-api" --query "services[0].networkConfiguration.awsvpcConfiguration.securityGroups[0]" --output text)
+          APIA_SUBNET=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+            --services "${PROJECT_NAME}-api-a" --query "services[0].networkConfiguration.awsvpcConfiguration.subnets[0]" --output text)
+          APIB_SUBNET=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+            --services "${PROJECT_NAME}-api-b" --query "services[0].networkConfiguration.awsvpcConfiguration.subnets[0]" --output text)
 
-          # Build full subnet list from VPC (in case service is already restricted)
-          FIRST_SUBNET=$(printf "%s" "$API_SUBNETS" | awk '{print $1}')
-          VPC_ID=$(aws ec2 describe-subnets --region "$AWS_REGION" --subnet-ids "$FIRST_SUBNET" --query "Subnets[0].VpcId" --output text)
-          ALL_PUBLIC_SUBNETS=$(aws ec2 describe-subnets --region "$AWS_REGION" \
-            --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" \
-            --query "Subnets[].SubnetId" --output text)
-          if [[ -n "$ALL_PUBLIC_SUBNETS" ]]; then
-            API_SUBNETS="$ALL_PUBLIC_SUBNETS"
-          fi
+          AZ_A=$(aws ec2 describe-subnets --region "$AWS_REGION" --subnet-ids "$APIA_SUBNET" --query "Subnets[0].AvailabilityZone" --output text)
+          AZ_B=$(aws ec2 describe-subnets --region "$AWS_REGION" --subnet-ids "$APIB_SUBNET" --query "Subnets[0].AvailabilityZone" --output text)
 
-          # Map subnets to AZs
-          declare -A SUBNET_TO_AZ
-          for subnet in $API_SUBNETS; do
-            az=$(aws ec2 describe-subnets --region "$AWS_REGION" --subnet-ids "$subnet" --query "Subnets[0].AvailabilityZone" --output text)
-            SUBNET_TO_AZ["$subnet"]="$az"
-          done
-
-          # Pick AZ to fail
           if [[ -z "${AZ_TO_FAIL}" ]]; then
-            AZ_TO_FAIL=$(printf "%s\n" "${SUBNET_TO_AZ[@]}" | sort | uniq | head -n 1)
+            AZ_TO_FAIL="$AZ_A"
           fi
           echo "Simulating AZ outage for: $AZ_TO_FAIL"
 
-          # Build subnet lists
-          SUBNETS_FAIL=""
-          SUBNETS_OK=""
-          for subnet in $API_SUBNETS; do
-            if [[ "${SUBNET_TO_AZ[$subnet]}" == "$AZ_TO_FAIL" ]]; then
-              SUBNETS_FAIL+="$subnet "
-            else
-              SUBNETS_OK+="$subnet "
-            fi
-          done
-          if [[ -z "$SUBNETS_OK" ]]; then
-            echo "No remaining subnets found outside $AZ_TO_FAIL"
-            exit 1
-          fi
-          AZ_TO_KEEP=$(printf "%s\n" "${SUBNET_TO_AZ[@]}" | sort | uniq | grep -v "$AZ_TO_FAIL" | head -n 1)
-          if [[ -z "$AZ_TO_KEEP" ]]; then
-            echo "Could not determine AZ to keep"
-            exit 1
+          if [[ "$AZ_TO_FAIL" == "$AZ_A" ]]; then
+            SERVICES_FAIL=("${SERVICES_A[@]}")
+            SERVICES_KEEP=("${SERVICES_B[@]}")
+          else
+            SERVICES_FAIL=("${SERVICES_B[@]}")
+            SERVICES_KEEP=("${SERVICES_A[@]}")
           fi
 
-          # Message mapping: if AZ 1a is down -> send test 2 first, else test 1 first
           MSG1="test 1"
           MSG2="test 2"
           if [[ "$AZ_TO_FAIL" == *"1a" ]]; then
@@ -212,31 +184,58 @@ jobs:
             MSG2="test 1"
           fi
 
-          # Export for later steps
           {
-            echo "API_SUBNETS=$API_SUBNETS"
-            echo "API_SG=$API_SG"
             echo "AZ_TO_FAIL=$AZ_TO_FAIL"
-            echo "AZ_TO_KEEP=$AZ_TO_KEEP"
-            echo "SUBNETS_OK=$SUBNETS_OK"
-            echo "SUBNETS_FAIL=$SUBNETS_FAIL"
+            echo "AZ_A=$AZ_A"
+            echo "AZ_B=$AZ_B"
+            echo "SERVICES_FAIL=${SERVICES_FAIL[*]}"
+            echo "SERVICES_KEEP=${SERVICES_KEEP[*]}"
             echo "MSG1=$MSG1"
             echo "MSG2=$MSG2"
           } >> "$GITHUB_ENV"
 
-          update_service_subnets () {
-            local svc="$1"
-            local subnets_csv
-            subnets_csv=$(printf "%s" "$2" | tr -s '[:space:]' ',' | sed 's/^,*//; s/,*$//')
-            aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" \
-              --network-configuration "awsvpcConfiguration={subnets=[$subnets_csv],securityGroups=[$API_SG],assignPublicIp=ENABLED}"
-          }
-
-          echo "Restricting services to AZs outside $AZ_TO_FAIL"
-          for svc in "${SERVICES[@]}"; do
-            update_service_subnets "$svc" "$SUBNETS_OK"
+          echo "Setting desired count 0 for services in failed AZ"
+          for svc in "${SERVICES_FAIL[@]}"; do
+            aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" --desired-count 0
+          done
+          echo "Ensuring desired count 1 for services in healthy AZ"
+          for svc in "${SERVICES_KEEP[@]}"; do
+            aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" --desired-count 1
           done
       
+      - name: Wait For Failover (First AZ)
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLUSTER="${CLUSTER_NAME}"
+          SERVICES=(${SERVICES_FAIL} ${SERVICES_KEEP})
+
+          for svc in "${SERVICES[@]}"; do
+            echo "Waiting for $svc to stabilize..."
+            ok="false"
+            for i in {1..30}; do
+              desired=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].desiredCount" --output text)
+              running=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].runningCount" --output text)
+              if [[ "$desired" == "0" && "$running" == "0" ]]; then
+                ok="true"
+                break
+              fi
+              if [[ "$desired" != "0" && "$running" -ge "$desired" ]]; then
+                ok="true"
+                break
+              fi
+              sleep 10
+            done
+            if [[ "$ok" != "true" ]]; then
+              echo "Service $svc did not stabilize."
+              aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].events[0:5]" --output json
+              exit 1
+            fi
+          done
+
       - name: Send Test Message (After AZ Fail)
         shell: bash
         run: |
@@ -247,37 +246,8 @@ jobs:
             echo "ALB DNS not found"
             exit 1
           fi
-          curl -sG --data-urlencode "message=${MSG1}" "http://${ALB_DNS}/demo-send" >/tmp/send1.json
+          curl -fsSG --data-urlencode "message=${MSG1}" "http://${ALB_DNS}/demo-send" >/tmp/send1.json
           echo "Sent message: ${MSG1}"
-
-      - name: Verify Services Recover In Other AZ
-        shell: bash
-        run: |
-          set -euo pipefail
-          CLUSTER="${CLUSTER_NAME}"
-          SERVICES=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b")
-
-          for svc in "${SERVICES[@]}"; do
-            echo "Waiting for $svc to stabilize..."
-            ok="false"
-            for i in {1..30}; do
-              desired=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
-                --services "$svc" --query "services[0].desiredCount" --output text)
-              running=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
-                --services "$svc" --query "services[0].runningCount" --output text)
-              if [[ "$desired" != "0" && "$running" -ge "$desired" ]]; then
-                ok="true"
-                break
-              fi
-              sleep 10
-            done
-            if [[ "$ok" != "true" ]]; then
-              echo "Service $svc did not stabilize."
-              aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
-                --services "$svc" --query "services[0].events[0:5]" --output json
-              exit 1
-            fi
-          done
 
       
       - name: Flip AZ (Fail The Other One)
@@ -285,40 +255,32 @@ jobs:
         run: |
           set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          SERVICES=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b")
+          SERVICES_A=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-processor-a")
+          SERVICES_B=("${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-b")
 
-          update_service_subnets () {
-            local svc="$1"
-            local subnets_csv
-            subnets_csv=$(printf "%s" "$2" | tr -s '[:space:]' ',' | sed 's/^,*//; s/,*$//')
-            aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" \
-              --network-configuration "awsvpcConfiguration={subnets=[$subnets_csv],securityGroups=[$API_SG],assignPublicIp=ENABLED}"
-          }
+          if [[ "$AZ_TO_FAIL" == "$AZ_A" ]]; then
+            SERVICES_FAIL=("${SERVICES_B[@]}")
+            SERVICES_KEEP=("${SERVICES_A[@]}")
+          else
+            SERVICES_FAIL=("${SERVICES_A[@]}")
+            SERVICES_KEEP=("${SERVICES_B[@]}")
+          fi
 
-          echo "Restricting services to AZ: $AZ_TO_FAIL"
-          for svc in "${SERVICES[@]}"; do
-            update_service_subnets "$svc" "$SUBNETS_FAIL"
+          echo "Setting desired count 0 for services in now-failed AZ"
+          for svc in "${SERVICES_FAIL[@]}"; do
+            aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" --desired-count 0
+          done
+          echo "Ensuring desired count 1 for services in other AZ"
+          for svc in "${SERVICES_KEEP[@]}"; do
+            aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" --desired-count 1
           done
           
-      - name: Send Test Message (After Second AZ Fail)
-        shell: bash
-        run: |
-           set -euo pipefail
-           ALB_DNS=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
-             --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
-           if [[ -z "$ALB_DNS" || "$ALB_DNS" == "None" ]]; then
-            echo "ALB DNS not found"
-             exit 1
-           fi
-           curl -sG --data-urlencode "message=${MSG2}" "http://${ALB_DNS}/demo-send" >/tmp/send2.json
-           echo "Sent message: ${MSG2}"
-                
-      - name: Verify Services Recover In Other AZ (Second Flip)
+      - name: Wait For Failover (Second AZ)
         shell: bash
         run: |
           set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          SERVICES=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b")
+          SERVICES=(${SERVICES_FAIL} ${SERVICES_KEEP})
 
           for svc in "${SERVICES[@]}"; do
             echo "Waiting for $svc to stabilize..."
@@ -328,6 +290,10 @@ jobs:
                 --services "$svc" --query "services[0].desiredCount" --output text)
               running=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
                 --services "$svc" --query "services[0].runningCount" --output text)
+              if [[ "$desired" == "0" && "$running" == "0" ]]; then
+                ok="true"
+                break
+              fi
               if [[ "$desired" != "0" && "$running" -ge "$desired" ]]; then
                 ok="true"
                 break
@@ -341,6 +307,19 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Send Test Message (After Second AZ Fail)
+        shell: bash
+        run: |
+           set -euo pipefail
+           ALB_DNS=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
+             --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
+           if [[ -z "$ALB_DNS" || "$ALB_DNS" == "None" ]]; then
+             echo "ALB DNS not found"
+             exit 1
+           fi
+           curl -fsSG --data-urlencode "message=${MSG2}" "http://${ALB_DNS}/demo-send" >/tmp/send2.json
+           echo "Sent message: ${MSG2}"
 
       
 
@@ -351,17 +330,9 @@ jobs:
           CLUSTER="${CLUSTER_NAME}"
           SERVICES=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b")
 
-          update_service_subnets () {
-            local svc="$1"
-            local subnets_csv
-            subnets_csv=$(printf "%s" "$2" | tr -s '[:space:]' ',' | sed 's/^,*//; s/,*$//')
-            aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" \
-              --network-configuration "awsvpcConfiguration={subnets=[$subnets_csv],securityGroups=[$API_SG],assignPublicIp=ENABLED}"
-          }
-
-          echo "Restoring services to both AZ subnets"
+          echo "Restoring desired count to 1 for all services"
           for svc in "${SERVICES[@]}"; do
-            update_service_subnets "$svc" "$API_SUBNETS"
+            aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" --desired-count 1
           done
 
       - name: Verify Services Stable (Restored)
@@ -369,7 +340,7 @@ jobs:
         run: |
           set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+          SERVICES=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b")
 
           for svc in "${SERVICES[@]}"; do
             echo "Waiting for $svc to stabilize..."
@@ -401,7 +372,7 @@ jobs:
             --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
 
           for i in {1..10}; do
-            DATA=$(curl -s "http://${ALB_DNS}/logs?limit=200")
+            DATA=$(curl -fsS "http://${ALB_DNS}/logs?limit=200")
             echo "$DATA" | grep -q "test 1" && echo "$DATA" | grep -q "test 2" && exit 0
             sleep 3
           done
@@ -412,7 +383,7 @@ jobs:
         shell: bash
         run: |
           CLUSTER="${CLUSTER_NAME}"
-          for svc in "${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor"; do
+          for svc in "${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b"; do
             echo "Service: $svc"
             TASKS=$(aws ecs list-tasks --region "$AWS_REGION" --cluster "$CLUSTER" \
               --service-name "$svc" --desired-status RUNNING --output text --query "taskArns")

@@ -97,13 +97,13 @@ variable "worker_memory" {
 variable "api_desired_count" {
   type        = number
   description = "Desired count for API service"
-  default     = 1
+  default     = 2
 }
 
 variable "worker_desired_count" {
   type        = number
   description = "Desired count for producer/processor services"
-  default     = 1
+  default     = 2
 }
 
 variable "api_min_capacity" {
@@ -121,7 +121,7 @@ variable "api_max_capacity" {
 variable "worker_min_capacity" {
   type        = number
   description = "Minimum tasks for producer/processor autoscaling"
-  default     = 1
+  default     = 2
 }
 
 variable "worker_max_capacity" {

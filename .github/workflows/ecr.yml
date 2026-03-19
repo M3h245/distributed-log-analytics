@@ -145,6 +145,16 @@ jobs:
           API_SG=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
             --services "${PROJECT_NAME}-api" --query "services[0].networkConfiguration.awsvpcConfiguration.securityGroups[0]" --output text)
 
+          # Build full subnet list from VPC (in case service is already restricted)
+          FIRST_SUBNET=$(printf "%s" "$API_SUBNETS" | awk '{print $1}')
+          VPC_ID=$(aws ec2 describe-subnets --region "$AWS_REGION" --subnet-ids "$FIRST_SUBNET" --query "Subnets[0].VpcId" --output text)
+          ALL_PUBLIC_SUBNETS=$(aws ec2 describe-subnets --region "$AWS_REGION" \
+            --filters "Name=vpc-id,Values=$VPC_ID" "Name=map-public-ip-on-launch,Values=true" \
+            --query "Subnets[].SubnetId" --output text)
+          if [[ -n "$ALL_PUBLIC_SUBNETS" ]]; then
+            API_SUBNETS="$ALL_PUBLIC_SUBNETS"
+          fi
+
           # Map subnets to AZs
           declare -A SUBNET_TO_AZ
           for subnet in $API_SUBNETS; do

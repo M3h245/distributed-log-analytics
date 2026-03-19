@@ -102,15 +102,18 @@ jobs:
       - name: Force new deployments
         run: |
           CLUSTER="${CLUSTER_NAME}"
-          aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "${PROJECT_NAME}-api" --force-new-deployment
-          aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "${PROJECT_NAME}-producer" --force-new-deployment
-          aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "${PROJECT_NAME}-processor" --force-new-deployment
+          aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "${PROJECT_NAME}-api-a" --force-new-deployment
+          aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "${PROJECT_NAME}-api-b" --force-new-deployment
+          aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "${PROJECT_NAME}-producer-a" --force-new-deployment
+          aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "${PROJECT_NAME}-producer-b" --force-new-deployment
+          aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "${PROJECT_NAME}-processor-a" --force-new-deployment
+          aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "${PROJECT_NAME}-processor-b" --force-new-deployment
 
       - name: Wait for services
         run: |
           CLUSTER="${CLUSTER_NAME}"
           aws ecs wait services-stable --region "$AWS_REGION" --cluster "$CLUSTER" \
-            --services "${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor"
+            --services "${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b"
 
   az-failover-test:
     runs-on: ubuntu-latest
@@ -150,7 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+          SERVICES=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b")
 
           # Get current subnets and security group from API service
           API_SUBNETS=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
@@ -252,7 +255,7 @@ jobs:
         run: |
           set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+          SERVICES=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b")
 
           for svc in "${SERVICES[@]}"; do
             echo "Waiting for $svc to stabilize..."
@@ -282,7 +285,7 @@ jobs:
         run: |
           set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+          SERVICES=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b")
 
           update_service_subnets () {
             local svc="$1"
@@ -315,7 +318,7 @@ jobs:
         run: |
           set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+          SERVICES=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b")
 
           for svc in "${SERVICES[@]}"; do
             echo "Waiting for $svc to stabilize..."
@@ -346,7 +349,7 @@ jobs:
         run: |
           set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+          SERVICES=("${PROJECT_NAME}-api-a" "${PROJECT_NAME}-api-b" "${PROJECT_NAME}-producer-a" "${PROJECT_NAME}-producer-b" "${PROJECT_NAME}-processor-a" "${PROJECT_NAME}-processor-b")
 
           update_service_subnets () {
             local svc="$1"

@@ -168,11 +168,11 @@ resource "aws_ecs_task_definition" "processor" {
   ])
 }
 
-resource "aws_ecs_service" "api" {
-  name            = "${var.project_name}-api"
+resource "aws_ecs_service" "api_a" {
+  name            = "${var.project_name}-api-a"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.api.arn
-  desired_count   = var.api_desired_count
+  desired_count   = 1
   launch_type     = "FARGATE"
 
   lifecycle {
@@ -180,7 +180,7 @@ resource "aws_ecs_service" "api" {
   }
 
   network_configuration {
-    subnets         = aws_subnet.public[*].id
+    subnets         = [aws_subnet.public[0].id]
     security_groups = [aws_security_group.ecs.id]
     assign_public_ip = true
   }
@@ -194,11 +194,11 @@ resource "aws_ecs_service" "api" {
   depends_on = [aws_lb_listener.http]
 }
 
-resource "aws_ecs_service" "producer" {
-  name            = "${var.project_name}-producer"
+resource "aws_ecs_service" "api_b" {
+  name            = "${var.project_name}-api-b"
   cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.producer.arn
-  desired_count   = var.worker_desired_count
+  task_definition = aws_ecs_task_definition.api.arn
+  desired_count   = 1
   launch_type     = "FARGATE"
 
   lifecycle {
@@ -206,7 +206,33 @@ resource "aws_ecs_service" "producer" {
   }
 
   network_configuration {
-    subnets         = aws_subnet.public[*].id
+    subnets         = [aws_subnet.public[1].id]
+    security_groups = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.api.arn
+    container_name   = "api"
+    container_port   = var.api_container_port
+  }
+
+  depends_on = [aws_lb_listener.http]
+}
+
+resource "aws_ecs_service" "producer_a" {
+  name            = "${var.project_name}-producer-a"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.producer.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
+
+  network_configuration {
+    subnets         = [aws_subnet.public[0].id]
     security_groups = [aws_security_group.ecs.id]
     assign_public_ip = true
   }
@@ -216,11 +242,11 @@ resource "aws_ecs_service" "producer" {
   }
 }
 
-resource "aws_ecs_service" "processor" {
-  name            = "${var.project_name}-processor"
+resource "aws_ecs_service" "producer_b" {
+  name            = "${var.project_name}-producer-b"
   cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.processor.arn
-  desired_count   = var.worker_desired_count
+  task_definition = aws_ecs_task_definition.producer.arn
+  desired_count   = 1
   launch_type     = "FARGATE"
 
   lifecycle {
@@ -228,89 +254,96 @@ resource "aws_ecs_service" "processor" {
   }
 
   network_configuration {
-    subnets         = aws_subnet.public[*].id
+    subnets         = [aws_subnet.public[1].id]
+    security_groups = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+
+  service_registries {
+    registry_arn = aws_service_discovery_service.producer.arn
+  }
+}
+
+resource "aws_ecs_service" "processor_a" {
+  name            = "${var.project_name}-processor-a"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.processor.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
+
+  network_configuration {
+    subnets         = [aws_subnet.public[0].id]
     security_groups = [aws_security_group.ecs.id]
     assign_public_ip = true
   }
 }
 
-resource "aws_appautoscaling_target" "api" {
-  service_namespace  = "ecs"
-  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.api.name}"
-  scalable_dimension = "ecs:service:DesiredCount"
-  min_capacity       = var.api_min_capacity
-  max_capacity       = var.api_max_capacity
-}
+resource "aws_ecs_service" "processor_b" {
+  name            = "${var.project_name}-processor-b"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.processor.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
 
-resource "aws_appautoscaling_policy" "api_cpu" {
-  name               = "${var.project_name}-api-cpu"
-  policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.api.resource_id
-  scalable_dimension = aws_appautoscaling_target.api.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.api.service_namespace
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
 
-  target_tracking_scaling_policy_configuration {
-    target_value = var.cpu_target_utilization
-
-    predefined_metric_specification {
-      predefined_metric_type = "ECSServiceAverageCPUUtilization"
-    }
-
-    scale_in_cooldown  = var.scale_in_cooldown
-    scale_out_cooldown = var.scale_out_cooldown
+  network_configuration {
+    subnets         = [aws_subnet.public[1].id]
+    security_groups = [aws_security_group.ecs.id]
+    assign_public_ip = true
   }
 }
 
-resource "aws_appautoscaling_target" "producer" {
+resource "aws_appautoscaling_target" "api_a" {
   service_namespace  = "ecs"
-  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.producer.name}"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.api_a.name}"
   scalable_dimension = "ecs:service:DesiredCount"
-  min_capacity       = var.worker_min_capacity
-  max_capacity       = var.worker_max_capacity
+  min_capacity       = 1
+  max_capacity       = 1
 }
 
-resource "aws_appautoscaling_policy" "producer_cpu" {
-  name               = "${var.project_name}-producer-cpu"
-  policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.producer.resource_id
-  scalable_dimension = aws_appautoscaling_target.producer.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.producer.service_namespace
-
-  target_tracking_scaling_policy_configuration {
-    target_value = var.cpu_target_utilization
-
-    predefined_metric_specification {
-      predefined_metric_type = "ECSServiceAverageCPUUtilization"
-    }
-
-    scale_in_cooldown  = var.scale_in_cooldown
-    scale_out_cooldown = var.scale_out_cooldown
-  }
-}
-
-resource "aws_appautoscaling_target" "processor" {
+resource "aws_appautoscaling_target" "api_b" {
   service_namespace  = "ecs"
-  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.processor.name}"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.api_b.name}"
   scalable_dimension = "ecs:service:DesiredCount"
-  min_capacity       = var.worker_min_capacity
-  max_capacity       = var.worker_max_capacity
+  min_capacity       = 1
+  max_capacity       = 1
 }
 
-resource "aws_appautoscaling_policy" "processor_cpu" {
-  name               = "${var.project_name}-processor-cpu"
-  policy_type        = "TargetTrackingScaling"
-  resource_id        = aws_appautoscaling_target.processor.resource_id
-  scalable_dimension = aws_appautoscaling_target.processor.scalable_dimension
-  service_namespace  = aws_appautoscaling_target.processor.service_namespace
+resource "aws_appautoscaling_target" "producer_a" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.producer_a.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = 1
+  max_capacity       = 1
+}
 
-  target_tracking_scaling_policy_configuration {
-    target_value = var.cpu_target_utilization
+resource "aws_appautoscaling_target" "producer_b" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.producer_b.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = 1
+  max_capacity       = 1
+}
 
-    predefined_metric_specification {
-      predefined_metric_type = "ECSServiceAverageCPUUtilization"
-    }
+resource "aws_appautoscaling_target" "processor_a" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.processor_a.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = 1
+  max_capacity       = 1
+}
 
-    scale_in_cooldown  = var.scale_in_cooldown
-    scale_out_cooldown = var.scale_out_cooldown
-  }
+resource "aws_appautoscaling_target" "processor_b" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.processor_b.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = 1
+  max_capacity       = 1
 }

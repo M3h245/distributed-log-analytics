@@ -224,7 +224,7 @@ jobs:
           update_service_subnets () {
             local svc="$1"
             local subnets_csv
-            subnets_csv=$(printf "%s" "$2" | tr ' ' ',' | sed 's/,$//')
+            subnets_csv=$(printf "%s" "$2" | tr -s '[:space:]' ',' | sed 's/^,*//; s/,*$//')
             aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" \
               --network-configuration "awsvpcConfiguration={subnets=[$subnets_csv],securityGroups=[$API_SG],assignPublicIp=ENABLED}"
           }
@@ -286,7 +286,7 @@ jobs:
           update_service_subnets () {
             local svc="$1"
             local subnets_csv
-            subnets_csv=$(printf "%s" "$2" | tr ' ' ',' | sed 's/,$//')
+            subnets_csv=$(printf "%s" "$2" | tr -s '[:space:]' ',' | sed 's/^,*//; s/,*$//')
             aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" \
               --network-configuration "awsvpcConfiguration={subnets=[$subnets_csv],securityGroups=[$API_SG],assignPublicIp=ENABLED}"
           }
@@ -348,7 +348,7 @@ jobs:
           update_service_subnets () {
             local svc="$1"
             local subnets_csv
-            subnets_csv=$(printf "%s" "$2" | tr ' ' ',' | sed 's/,$//')
+            subnets_csv=$(printf "%s" "$2" | tr -s '[:space:]' ',' | sed 's/^,*//; s/,*$//')
             aws ecs update-service --region "$AWS_REGION" --cluster "$CLUSTER" --service "$svc" \
               --network-configuration "awsvpcConfiguration={subnets=[$subnets_csv],securityGroups=[$API_SG],assignPublicIp=ENABLED}"
           }

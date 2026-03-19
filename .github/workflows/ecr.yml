@@ -132,6 +132,19 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Validate ECR Images Exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in api producer processor; do
+            repo="${PROJECT_NAME}-${name}"
+            if ! aws ecr describe-images --region "$AWS_REGION" --repository-name "$repo" \
+              --image-ids imageTag=latest >/dev/null 2>&1; then
+              echo "Missing image tag 'latest' in ECR repo: $repo"
+              exit 1
+            fi
+          done
+
       - name: Simulate AZ Failure (Restrict Subnets To One AZ)
         shell: bash
         run: |
@@ -222,10 +235,33 @@ jobs:
           done
 
       - name: Verify Services Recover In Other AZ
+        shell: bash
         run: |
+          set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          aws ecs wait services-stable --region "$AWS_REGION" --cluster "$CLUSTER" \
-            --services "${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor"
+          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+
+          for svc in "${SERVICES[@]}"; do
+            echo "Waiting for $svc to stabilize..."
+            ok="false"
+            for i in {1..30}; do
+              desired=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].desiredCount" --output text)
+              running=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].runningCount" --output text)
+              if [[ "$desired" != "0" && "$running" -ge "$desired" ]]; then
+                ok="true"
+                break
+              fi
+              sleep 10
+            done
+            if [[ "$ok" != "true" ]]; then
+              echo "Service $svc did not stabilize."
+              aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].events[0:5]" --output json
+              exit 1
+            fi
+          done
 
       - name: Send Test Message (After AZ Fail)
         shell: bash
@@ -257,10 +293,33 @@ jobs:
           done
 
       - name: Verify Services Recover In Other AZ (Second Flip)
+        shell: bash
         run: |
+          set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          aws ecs wait services-stable --region "$AWS_REGION" --cluster "$CLUSTER" \
-            --services "${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor"
+          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+
+          for svc in "${SERVICES[@]}"; do
+            echo "Waiting for $svc to stabilize..."
+            ok="false"
+            for i in {1..30}; do
+              desired=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].desiredCount" --output text)
+              running=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].runningCount" --output text)
+              if [[ "$desired" != "0" && "$running" -ge "$desired" ]]; then
+                ok="true"
+                break
+              fi
+              sleep 10
+            done
+            if [[ "$ok" != "true" ]]; then
+              echo "Service $svc did not stabilize."
+              aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].events[0:5]" --output json
+              exit 1
+            fi
+          done
 
       - name: Send Test Message (After Second AZ Fail)
         shell: bash
@@ -292,10 +351,33 @@ jobs:
           done
 
       - name: Verify Services Stable (Restored)
+        shell: bash
         run: |
+          set -euo pipefail
           CLUSTER="${CLUSTER_NAME}"
-          aws ecs wait services-stable --region "$AWS_REGION" --cluster "$CLUSTER" \
-            --services "${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor"
+          SERVICES=("${PROJECT_NAME}-api" "${PROJECT_NAME}-producer" "${PROJECT_NAME}-processor")
+
+          for svc in "${SERVICES[@]}"; do
+            echo "Waiting for $svc to stabilize..."
+            ok="false"
+            for i in {1..30}; do
+              desired=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].desiredCount" --output text)
+              running=$(aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].runningCount" --output text)
+              if [[ "$desired" != "0" && "$running" -ge "$desired" ]]; then
+                ok="true"
+                break
+              fi
+              sleep 10
+            done
+            if [[ "$ok" != "true" ]]; then
+              echo "Service $svc did not stabilize."
+              aws ecs describe-services --region "$AWS_REGION" --cluster "$CLUSTER" \
+                --services "$svc" --query "services[0].events[0:5]" --output json
+              exit 1
+            fi
+          done
 
       - name: Verify Logs Contain Both Messages
         shell: bash

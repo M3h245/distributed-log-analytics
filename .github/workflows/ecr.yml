@@ -233,6 +233,19 @@ jobs:
           for svc in "${SERVICES[@]}"; do
             update_service_subnets "$svc" "$SUBNETS_OK"
           done
+      
+      - name: Send Test Message (After AZ Fail)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALB_DNS=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
+            --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
+          if [[ -z "$ALB_DNS" || "$ALB_DNS" == "None" ]]; then
+            echo "ALB DNS not found"
+            exit 1
+          fi
+          curl -sG --data-urlencode "message=${MSG1}" "http://${ALB_DNS}/demo-send" >/tmp/send1.json
+          echo "Sent message: ${MSG1}"
 
       - name: Verify Services Recover In Other AZ
         shell: bash
@@ -263,19 +276,7 @@ jobs:
             fi
           done
 
-      - name: Send Test Message (After AZ Fail)
-        shell: bash
-        run: |
-          set -euo pipefail
-          ALB_DNS=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
-            --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
-          if [[ -z "$ALB_DNS" || "$ALB_DNS" == "None" ]]; then
-            echo "ALB DNS not found"
-            exit 1
-          fi
-          curl -sG --data-urlencode "message=${MSG1}" "http://${ALB_DNS}/demo-send" >/tmp/send1.json
-          echo "Sent message: ${MSG1}"
-
+      
       - name: Flip AZ (Fail The Other One)
         shell: bash
         run: |
@@ -295,7 +296,20 @@ jobs:
           for svc in "${SERVICES[@]}"; do
             update_service_subnets "$svc" "$SUBNETS_FAIL"
           done
-
+          
+      - name: Send Test Message (After Second AZ Fail)
+        shell: bash
+        run: |
+           set -euo pipefail
+           ALB_DNS=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
+             --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
+           if [[ -z "$ALB_DNS" || "$ALB_DNS" == "None" ]]; then
+            echo "ALB DNS not found"
+             exit 1
+           fi
+           curl -sG --data-urlencode "message=${MSG2}" "http://${ALB_DNS}/demo-send" >/tmp/send2.json
+           echo "Sent message: ${MSG2}"
+                
       - name: Verify Services Recover In Other AZ (Second Flip)
         shell: bash
         run: |
@@ -325,18 +339,7 @@ jobs:
             fi
           done
 
-      - name: Send Test Message (After Second AZ Fail)
-        shell: bash
-        run: |
-          set -euo pipefail
-          ALB_DNS=$(aws elbv2 describe-load-balancers --region "$AWS_REGION" \
-            --names "${PROJECT_NAME}-alb" --query "LoadBalancers[0].DNSName" --output text)
-          if [[ -z "$ALB_DNS" || "$ALB_DNS" == "None" ]]; then
-            echo "ALB DNS not found"
-            exit 1
-          fi
-          curl -sG --data-urlencode "message=${MSG2}" "http://${ALB_DNS}/demo-send" >/tmp/send2.json
-          echo "Sent message: ${MSG2}"
+      
 
       - name: Restore Both AZs
         shell: bash
